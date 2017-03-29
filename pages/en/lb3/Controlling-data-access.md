@@ -260,3 +260,97 @@ The order of ACL rules will be #3, #2, #1\. As a result, the request will be rej
 Specify a `DEBUG` environment variable with value `loopback:security:*` for the console to log the lookups and checks the server
 makes as requests come in, useful to understand things from its perspective.
 Do this in your test environment as there may be quite a lot of output.
+
+## Authorization scopes
+
+LoopBack's built-in authorization algorithm allows application to limit
+access to remote methods using the concept of scopes. The implementation
+is similar to [oAuth2 Access Token Scope](https://tools.ietf.org/html/rfc6749#section-3.3).
+
+There are two steps needed to start using this feature:
+
+ 1. Define scopes required by remote methods
+
+ 2. Add API for creating scoped AccessTokens
+
+{% include note.html content="
+LoopBack provides a single built-in scope `DEFAULT` that's used whenever a method does not define any scopes or an access token does not contain any allowed scopes. This preserves backwards compatibility for existing applications.
+" %}
+
+### Define scopes required by remote methods
+
+The scopes are defined together with other remoting metadata via the new
+setting `accessScopes`.
+
+The user can invoke the remote method as long as their access token
+is granted at least one of the scopes listed in `accessScopes` array.
+
+Example configuration:
+
+{% include code-caption.html content="common/models/user.json" %}
+```json
+{
+  // ...
+  "methods": {
+    "prototype.getProfile": {
+      "accepts": [],
+      "returns": { "arg": "data", "type": "User", "root": true},
+      "http": {"verb": "get", "path": "/profile"},
+      "accessScopes": ["read", "read:profile"],
+    }
+  }
+}
+```
+
+Additional scopes can be defined in model settings via the new setting
+`accessScopes`. This enables models to add additional custom scopes to built-in
+methods provided e.g. by `PersistedModel`.
+
+Example configuration:
+
+{% include code-caption.html content="common/models/my-model.json" %}
+```json
+{
+  // ...
+  "accessScopes": {
+    "findById": ["read", "read:profile"]
+  }
+}
+```
+
+### Create scoped Access Tokens
+
+The built-in `User.login` method creates access token with no scopes, i.e.
+scoped to the built-in `DEFAULT` scope. This allows users to invoke all
+built-in methods and any custom methods added before the scoping feature was
+introduced.
+
+It's up to the application developers to decide how to generate access tokens
+limited to a different set of scopes.
+
+The example below shows how to create a new remote method for issuing tokens
+for external applications that allow these apps only to read user's profile
+data.
+
+{% include code-caption.html content="common/models/user.js" %}
+```js
+module.exports = function(User) {
+  User.instance.createTokenForExternalApp = function(cb) {
+    this.accessTokens.create({
+      ttl: -1,
+      scopes: ['read:profile'],
+    }, cb);
+  };
+};
+```
+
+### Migration path
+
+Applications upgrading from an older LoopBack 3.x version need to take the
+following steps:
+
+ - Database schema must be updated (e.g. by running [autoupdate](https://apidocs.strongloop.com/loopback-datasource-juggler/#datasource-prototype-autoupdate))
+
+ - If the application was already using a custom AccessToken.scopes
+   property with a type different from an array, then the relevant code
+   must be updated to work with the new type "array of strings".
